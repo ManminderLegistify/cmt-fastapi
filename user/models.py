@@ -7,6 +7,7 @@ class User(Base):
 
     id = Column(Integer, primary_key = True)
     password = Column(String, nullable=False)
+    is_lawyer = Column(Boolean, nullable=True)
     is_superuser = Column(Boolean, nullable=True)
     username = Column(String, nullable=False)
     first_name = Column(String, nullable=True)
@@ -19,4 +20,12 @@ class User(Base):
     date_joined = Column(DateTime, nullable=True)
 
 
+class UserOTP(Base):
+    __tablename__ = 'users_userotp'
+
+    id = Column(Integer, primary_key = True)
+    otp = Column(Integer, nullable=True)
+    user_id = Column(Integer, foreign_key=('users_user'))
+    created = Column(DateTime, nullable=True)
+    modified = Column(DateTime, nullable=True)
 

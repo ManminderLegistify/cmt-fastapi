@@ -1,70 +1,80 @@
 from fastapi import FastAPI, Depends, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
+from fastapi_utils.cbv import cbv
+from fastapi_utils.inferring_router import InferringRouter
 from passlib.context import CryptContext
+from sqlalchemy.sql.functions import user
 from .schemas import Users
 from sqlalchemy.orm import Session
 from .database import get_db
-from .models import User
+from .models import User, UserOTP
 from .auth import AuthHandler
+from fastapi.responses import JSONResponse
+import math, random
 
 from datetime import datetime, timedelta
 
+
 app = FastAPI()
-
-# class AuthHandler():
-#     security = HTTPBearer()
-#     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-#     secret = "123456"
+router = InferringRouter() 
 
 
-#     def get_password_hash(self, password):
-#         return self.pwd_context.hash(password)
-
-#     def verify_password(self, plain_password, hashed_password):
-#         return self.pwd_context.verify(plain_password, hashed_password)
-
-#     def encode_token(self, user_name):
-#         payload = {
-#             'exp': datetime.utcnow() + timedelta(days=0, minutes=5),
-#             'iat': datetime.utcnow(),
-#             'sub': user_name
-#         }
-
-#         return jwt.encode(
-#             payload,
-#             self.secret,
-#             algorithm="HS256"
-#         )
-
-#     def decode_token(self, token):
-#         try:
-#             payload = jwt.decode(token, self.secret, algorithms=["HS256"])
-#             return payload['sub']
-#         except jwt.ExpiredSignatureError:
-#             raise HTTPException(status_code=401, detail='Signature Has Expired')
-#         except jwt.InvalidTokenError as e:
-#             raise HTTPException(status_code=401, detail='Invalid Token')
-
-#     def auth_wrapper(self, auth: HTTPAuthorizationCredentials = Security(security)):
-#         return self.decode_token(auth.credentials)
 auth_handler = AuthHandler()
-@app.post('/api-token-auth')
-def login(request: Users, db: Session = Depends(get_db)):
-    try:
-        pas = auth_handler.get_password_hash(request.username)
-        print(pas)
-        user_obj = db.query(User).filter(User.username == request.username).first()
-        print(user_obj)
-        iden = auth_handler.identify_hash(user_obj.password)
-        print(iden)
-        veri = auth_handler.verify_password(request.password, user_obj.password)
-        print(veri)
-        if veri:
-            return auth_handler.encode_token(request.username)
-        return request
-    except Exception as e:
-        print(e)
+
+@cbv(router)
+
+class LawyerLogin:
+
+    session: Session = Depends(get_db)
+
+    def genrate_otp(self):
+        digits = "0123456789"
+        OTP = ""
+        for i in range(4) :
+            OTP += digits[math.floor(random.random() * 10)]
+    
+        return OTP
+
+    @router.get("/login-mail")
+    def check_for_mail(self, email: str):
+        try: 
+            user_obj = self.session.query(User).filter(User.email == email).first()
+            if user_obj:
+                if user_obj and user_obj.is_lawyer:
+                    otp = self.genrate_otp()
+                    otp_data = {'user_id':user_obj.id, 'otp': otp, 'created': datetime.now(), 'modified': datetime.now()}
+                    user_otp = UserOTP(**otp_data)
+                    self.session.add(user_otp)
+                    self.session.commit()
+                    #send mail with this otp and make check for otp genration time
+                    print(otp)
+                    return True
+                    # return [{'response': True, 'description': 'User with provided mail exists and its is a lawyer', 'timestamp': datetime}]
+
+        except Exception as e:
+            print(e)
+
+    @router.get("/login-otp")
+    def check_for_otp(self, otp: int, email: str):
+        try:
+            user_obj = self.session.query(User).filter(User.email == email).first()
+            user_otp_obj = self.session.query(UserOTP).filter(UserOTP.user_id == user_obj.id)
+            otp_flag = False
+            for user_otp in user_otp_obj:
+                if user_otp.created.strftime("%m/%d/%Y, %H:%M:%S") > (datetime.now() - timedelta(minutes=10)).strftime("%m/%d/%Y, %H:%M:%S"):
+                    if user_otp.otp == otp:
+                        otp_flag = True
+                    #send mail to this email with this otp
+            if otp_flag:
+                token = auth_handler.encode_token(user_obj.email)
+                return token
+            else:
+                return False
+        except Exception as e:
+            print(e)
+
+
 
 @app.get('/')
 def get_user(id: int, db: Session = Depends(get_db)):
@@ -73,3 +83,5 @@ def get_user(id: int, db: Session = Depends(get_db)):
         return db.query(User).filter(User.id == id).first()
     except Exception as e:
         print(e)
+
+app.include_router(router)
